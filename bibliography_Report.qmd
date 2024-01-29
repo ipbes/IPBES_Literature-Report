@@ -224,8 +224,6 @@ bib_works |>
 #| fig-height: 10
 #| fig-width: 10
 
-library(ggplot2)
-
 top_journals <- bib_works$so |>
     table() |>
     sort(decreasing = TRUE) |>
@@ -252,6 +250,49 @@ data.frame(
     ) +
     ggtitle(
         "Most often cited Journals"
+    ) +
+    theme(
+        plot.title = element_text(size = 15)
+    )
+```
+
+## Coutries of Institutes of all authors
+
+sapply(bib_works$author, function(x){x["institution_country_code"]}) |> unlist() |> table() |> sort()
+```{r}
+#| label: top_countries
+#| fig-height: 10
+#| fig-width: 10
+
+top_countries <- sapply(bib_works$author, function(x) {
+    x["institution_country_code"]
+}) |>
+    unlist() |>
+    table() |>
+    sort(decreasing = TRUE) |>
+    head(50)
+
+data.frame(
+    Country = names(top_countries),
+    Count = as.numeric(top_countries)
+) |>
+    ggplot(
+        aes(
+            x = reorder(Country, -Count),
+            y = Count
+        )
+    ) +
+    geom_bar(
+        stat = "identity",
+        fill = "steelblue"
+    ) +
+    coord_flip() +
+    labs(
+        x = "Country",
+        y = "Count"
+    ) +
+    ggtitle(
+        "Countries of Institutes of all Authors"
     ) +
     theme(
         plot.title = element_text(size = 15)
