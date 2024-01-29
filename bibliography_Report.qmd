@@ -1,0 +1,378 @@
+---
+title: "Quality report of a bibliography"
+format:
+    html:
+        toc: true
+        toc-depth: 2
+        embed-resources: true
+        code-fold: true
+        code-summary: "Show the code"
+        # grid:
+        #     sidebar-width: 0px
+        #     body-width: 4000px
+        #     margin-width: 200px
+        #     gutter-width: 1.5rem    
+params:
+    bibliography: "input/IPBES ILK.csv"
+    mc.cores: 10
+---
+
+# Introduction
+
+This report assesses the following in regards to the provided bibliography:
+
+- [ ] "cleanliness" of bibliography, regarding DOIs, 
+    - [x] number of DOIs
+    - [x] duplicates
+    - [x] valid
+    - [ ] existing
+    - [x] retracted
+    - [ ] ...
+- [x] other identifiers by proportion
+- [ ] geographic distribution by institute
+- [x] Open access status
+- [x] statistics about the most cited journals, publication dates, ...
+- [ ] VOSViewer based visualisations
+- [ ] OpenAlex concepts (which are by the way at the moment under revision)
+- [x] year of publication
+- [ ] ...
+
+Remarks: 
+- Group ID is in the json, but not in the csv. The group ID makes it possible to directly jump to the reference in the Zotero Library online.
+
+```{r}
+#| label: setup
+#| include: false
+#|
+if (!(exists("params"))) {
+    params <- rmarkdown::yaml_front_matter("./bibliography_report.qmd")$params
+}
+
+suppressPackageStartupMessages({
+    # library(jsonlite)
+    library(openalexR)
+    library(knitr)
+    library(dplyr)
+    library(ggplot2)
+    # library(ggraph)
+    # library(tidygraph)
+    # library(tictoc)
+    library(pbmcapply)
+    library(IPBES.R)
+})
+```
+
+# Load the bibliography and prepare it
+
+```{r}
+#| label: load_bibliography
+#|
+
+bib <- read.csv(params$bibliography)
+
+dois <- bib$DOI
+names(dois) <- bib$Key
+dois <- dois[dois != ""]
+
+isbns <- bib$ISBN
+names(isbns) <- bib$Key
+isbns <- isbns[isbns != ""]
+
+issns <- bib$DOI
+names(issns) <- bib$Key
+issns <- issns[issns != ""]
+```
+
+
+# Data Quality of the Bibliography
+
+## Cleanliness of bibliography
+
+One measure of the cleanliness of a Bibliography is assessed by checking the number of references that have a DOI. The following table gives an overview over some numbers:
+
+```{r}
+#| label: quality
+#|
+
+dois_valid <- IPBES.R::doi_valid(dois)
+dois_exist <- IPBES.R::doi_exists(dois, cache_file = file.path(".", "cache", "doi_exist.rds"))
+dois_not_retracted <- IPBES.R::doi_not_retracted(dois, cache_file = file.path(".", "cache", "doi_not_retracted.rds"))
+
+oldopts <- options(knitr.kable.NA = "")
+data.frame(
+    Measure = c(
+        "# References",
+        "**DOI**",
+        "# DOIs",
+        "# Duplicate DOIs",
+        "# Existing DOIs",
+        "# Retracted DOIs",
+        "% Duplicate DOIs",
+        "**ISBN**",
+        "# ISBNs",
+        "# Duplicate ISBNs",
+        "**ISSN**",
+        "# ISSNs",
+        "# Duplicate ISSNs"
+    ),
+    Value = c(
+        nrow(bib),
+        NA,
+        sum(!is.na(dois)),
+        length(dois) - length(unique((dois))),
+        sum(dois_exist),
+        sum(!dois_not_retracted),
+        ((dois_valid |> unique() |> length()) / length(dois_valid)) |> round(digits = 3) * 100,
+        NA,
+        sum(!is.na(isbns)),
+        length(isbns) - length(unique((isbns))),
+        NA,
+        sum(!is.na(issns)),
+        length(issns) - length(unique((issns)))
+    )
+) |>
+    knitr::kable(
+        caption = "Cleanliness of the Bibliography",
+    )
+options(oldopts)
+```
+
+# Contentual and Bibliographic analysis
+
+The contentual nd bibliometric analysis is done using OpenAlex data with the DOIs which were identified to exist. 
+For this we have to first get the data from the OpenAlex API.
+
+```{r}
+#| label: get_works
+#|
+#|
+
+fn <- file.path(".", "data", "bib_works.rds")
+if (file.exists(fn)) {
+    bib_works <- readRDS(fn)
+} else {
+    dt <- names(dois_exist) |>
+        gsub(pattern = "^https://doi.org/", replacement = "") |>
+        gsub(pattern = "^https://dx.doi.org/", replacement = "") |>
+        gsub(pattern = "^https://hdl.handle.net/", replacement = "") |>
+        gsub(pattern = "^http://doi.org/", replacement = "") |>
+        gsub(pattern = "^http://dx.doi.org/", replacement = "") |>
+        gsub(pattern = "^http://hdl.handle.net/", replacement = "") |>
+        gsub(pattern = "^doi:", replacement = "") |>
+        gsub(pattern = "^DOI ", replacement = "")
+
+    doi_chunks <- split(dt, ceiling(seq_along(dt) / 199))
+
+    bib_works <- lapply(
+        seq_along(doi_chunks),
+        function(i) {
+            message("\nFetching ", i, " of ", length(doi_chunks), "\n")
+        }
+    ) |>
+        do.call(what = rbind)
+
+    saveRDS(bib_works, fn)
+}
+```
+
+## Year of Publication
+
+```{r}
+bib_works |>
+    ggplot(
+        aes(
+            x = publication_year,
+            fill = oa_status
+        )
+    ) +
+    geom_bar(
+        position = "stack",
+        color = "#e9ecef",
+        alpha = 0.9,
+    ) +
+    scale_fill_manual(values = c("red", "black", "gold", "green", "pink")) +
+    ggtitle("Publication Year") +
+    theme(
+        plot.title = element_text(size = 15)
+    )
+```
+
+```{r}
+bib_works |>
+    ggplot(
+        aes(
+            x = publication_year,
+            fill = oa_status
+        )
+    ) +
+    geom_bar(
+        position = "fill",
+        color = "#e9ecef",
+        alpha = 0.9,
+    ) +
+    scale_fill_manual(values = c("red", "black", "gold", "green", "pink")) +
+    ggtitle("Publication Year") +
+    theme(
+        plot.title = element_text(size = 15)
+    )
+```
+
+## 50 Most often cited Journals
+    
+```{r}
+#| label: top_journals
+#| fig-height: 10
+#| fig-width: 10
+
+library(ggplot2)
+
+top_journals <- bib_works$so |>
+    table() |>
+    sort(decreasing = TRUE) |>
+    head(50)
+
+data.frame(
+    Journal = names(top_journals),
+    Count = as.numeric(top_journals)
+) |>
+    ggplot(
+        aes(
+            x = reorder(Journal, -Count),
+            y = Count
+        )
+    ) +
+    geom_bar(
+        stat = "identity",
+        fill = "steelblue"
+    ) +
+    coord_flip() +
+    labs(
+        x = "Journal",
+        y = "Count"
+    ) +
+    ggtitle(
+        "Most often cited Journals"
+    ) +
+    theme(
+        plot.title = element_text(size = 15)
+    )
+```
+
+
+# Values assessment as an case study
+
+```{r}
+#| label: get_ids
+#| eval: false
+#|
+
+ilk_id <- list(
+    doi = ilk$DOI[dois_valid] |>
+        unique(),
+    isbn = ilk$ISBN[ilk$ISBN != ""] |>
+        unique(),
+    issn = ilk$ISSN[ilk$ISSN != ""] |>
+        unique()
+)
+
+# ilk_snowball_id <- list(
+#     doi = ilk_snowball$nodes$doi[ilk_snowball$nodes$doi != ""] |>
+#         unique()
+# )
+
+va <- read.csv(file.path("input", "./Values Assessment.csv"))
+
+va_id <- list(
+    doi = va$DOI[va$DOI != ""] |>
+        unique(),
+    isbn = va$ISBN[va$ISBN != ""] |>
+        unique(),
+    issn = va$ISSN[va$ISSN != ""] |>
+        unique()
+)
+```
+
+In the ILK database, there are `nrow(ilk)` references, while in the Value Assessment bibliography has `nrow(va)` references.
+
+We now determine the overlap of these two by comparing the DOIs.
+```{r}
+#| label: id_overlap
+#| eval: false
+#|
+
+# both_id <- list(
+#     doi = va_id$doi[(va_id$doi %in% ilk_id$doi)],
+#     isbn = va_id$isbn[(va_id$isbn %in% ilk_id$isbn)],
+#     issn = va_id$issn[(va_id$issn %in% ilk_id$issn)] # ,
+#     #     doi_snowball = va_id$doi[(va_id$doi %in% gsub("https://doi.org/", "", ilk_snowball_id$doi))]
+# )
+
+# count <- sapply(both_id, length)
+# va_ref <- sapply(va_id, length)
+# va_ref <- c(va_ref, doi_snowball = va_ref[[1]])
+
+# data.frame(
+#     ref_ILK = length(),
+#     va_ref = va_ref,
+#     p = round(count / va_ref, digits = 3)
+# ) |>
+#     knitr::kable(
+#         caption = "Overlap of the ILK and the Values Assessment Bibliography",
+#         col.names = c("ILK ref in VA", "n VA ref", "p")
+#     )
+
+
+data.frame(
+    No.ILK.Ref = nrow(ilk),
+    No.Valid.DOIs = length(dois_valid),
+    No.VA.Ref = nrow(va),
+    No.DOI.both = sum(dois_valid %in% va$DOI),
+    No.ISBN.both = sum((ilk$ISBN[ilk$ISBN != ""]) %in% va$ISBN),
+    No.ISSN.both = sum((ilk$ISSN[ilk$ISSN != ""]) %in% va$ISBN)
+) |> knitr::kable(
+    caption = "Number of references in ILK Database"
+)
+
+```
+
+
+# Assessment of [OpenAlex(https://openalex.org)] Concepts
+```{r}
+#| label: openalex_concepts
+#| eval: false
+#|
+
+
+concepts <- do.call(rbind, ilk_works[["concepts"]])
+
+concepts_summary <- concepts |>
+    #     filter(level == 1) |>
+    mutate(score = round(score * 100)) |>
+    group_by(display_name, level) |>
+    summarize(score = mean(score), count = n()) |>
+    arrange(desc(count))
+
+```
+
+```{r}
+#| label: citations_links
+#| eval: false
+#|
+
+ggraph(graph = as_tbl_graph(ilk_snowball), layout = "stress") +
+    geom_edge_link(aes(alpha = after_stat(index)), show.legend = FALSE) +
+    geom_node_point(aes(fill = oa_input, size = cited_by_count), shape = 21, color = "white") +
+    geom_node_label(aes(filter = oa_input, label = id), nudge_y = 0.2, size = 3) +
+    scale_edge_width(range = c(0.1, 1.5), guide = "none") +
+    scale_size(range = c(3, 10), guide = "none") +
+    scale_fill_manual(values = c("#a3ad62", "#d46780"), na.value = "grey", name = "") +
+    theme_graph() +
+    theme(
+        plot.background = element_rect(fill = "transparent", colour = NA),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        legend.position = "bottom"
+    ) +
+    guides(fill = "none")
+
+```
+
